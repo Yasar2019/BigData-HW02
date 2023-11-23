@@ -1,7 +1,12 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import explode, split, lower, col, regexp_replace
+from pyspark.sql.functions import explode, split, lower, col, regexp_replace, collect_list, struct, expr
 from operator import add
+from itertools import combinations
 from pyspark.sql import functions as F
+from itertools import combinations
+import numpy as np
+import pandas as pd
+
 import os
 
 print(os.environ['HADOOP_HOME'])
@@ -34,6 +39,8 @@ if __name__ == "__main__":
         column = regexp_replace(column, "(?<!\\w)'|'(?!(\\w|'))|[^\\w\\s]", "")
         return column
     
+# ***************************************TASK 1*************************************************************************
+
     # Clean the 'Title' and 'Headline' columns
     data = data.withColumn('Title', clean_text(col('Title')))
     data = data.withColumn('Headline', clean_text(col('Headline')))
@@ -127,3 +134,79 @@ if __name__ == "__main__":
     # Save to CSV
     word_count_pd_title.to_csv("output/per_topic_word_counts_title.csv", index=False)
     word_count_pd_headline.to_csv("output/per_topic_word_counts_headline.csv", index=False)
+    
+# ***************************************TASK 3*************************************************************************
+
+    # Map to (topic, (sentiment_score, 1)) pairs for both SentimentTitle and SentimentHeadline
+    topic_sentiment_rdd_title = data.rdd.map(lambda row: (row['Topic'], (float(row['SentimentTitle']), 1)))
+    topic_sentiment_rdd_headline = data.rdd.map(lambda row: (row['Topic'], (float(row['SentimentHeadline']), 1)))
+
+    # Reduce by key to sum sentiment scores and count occurrences
+    sum_count_rdd_title = topic_sentiment_rdd_title.reduceByKey(lambda x, y: (x[0] + y[0], x[1] + y[1]))
+    sum_count_rdd_headline = topic_sentiment_rdd_headline.reduceByKey(lambda x, y: (x[0] + y[0], x[1] + y[1]))
+
+    # Combine results from title and headline
+    combined_rdd = sum_count_rdd_title.join(sum_count_rdd_headline)
+
+    # Calculate total sum and average
+    final_rdd = combined_rdd.map(lambda x: (x[0], (x[1][0][0] + x[1][1][0], (x[1][0][0] + x[1][1][0]) / (x[1][0][1] + x[1][1][1]))))
+
+    # Convert to DataFrame
+    sentiment_df = spark.createDataFrame(final_rdd.map(lambda x: (x[0], x[1][0], x[1][1])),
+                                        ["Topic", "Total_Sum_Sentiment", "Avg_Sentiment"])
+
+    # Convert to Pandas DataFrame
+    sentiment_pd = sentiment_df.toPandas()
+
+    # Save to CSV
+    sentiment_pd.to_csv("output/topic_sentiment_summary.csv", index=False)
+
+
+    # ***************************************TASK 4*************************************************************************
+
+    # Load the word counts data
+    title_word_counts_df = spark.read.csv("output/per_topic_word_counts_title.csv", header=True, inferSchema=True)
+    headline_word_counts_df = spark.read.csv("output/per_topic_word_counts_headline.csv", header=True, inferSchema=True)
+
+    # Function to extract top 100 words per topic
+    def extract_top_words(df):
+        return df.groupBy("topic").agg(
+            collect_list(struct(col("count"), col("word"))).alias("words")
+        ).withColumn(
+            "top_words", expr("slice(array_sort(words, (x, y) -> int(y.count - x.count)), 1, 100)")
+        ).select("topic", explode("top_words.word").alias("word"))
+        
+    # Extract top 100 words for titles and headlines
+    top_words_titles_df = extract_top_words(title_word_counts_df)
+    top_words_headlines_df = extract_top_words(headline_word_counts_df)
+
+    # Function to calculate co-occurrence matrix
+    def calculate_co_occurrence_matrix(news_data_df, top_words_df, field):
+        topics = top_words_df.select("topic").distinct().collect()
+        for topic in topics:
+            topic_name = topic['topic']
+            words = top_words_df.filter(col('topic') == topic_name).select('word').rdd.flatMap(lambda x: x).collect()
+            word_pairs = list(combinations(words, 2))
+
+            # Initialize matrix
+            matrix = pd.DataFrame(0, index=words, columns=words)
+
+            # Count co-occurrences
+            for pair in word_pairs:
+                count = news_data_df.filter(
+                    (col('Topic') == topic_name) & 
+                    col(field).like(f'%{pair[0]}%') & 
+                    col(field).like(f'%{pair[1]}%')
+                ).count()
+                matrix.loc[pair[0], pair[1]] = count
+                matrix.loc[pair[1], pair[0]] = count
+
+            # Save matrix to CSV
+            matrix.to_csv(f"output/co_occurrence_matrix_{topic_name}_{field}.csv")
+
+    # Calculate co-occurrence matrices for titles and headlines
+    calculate_co_occurrence_matrix(data, top_words_titles_df, "Title")
+    calculate_co_occurrence_matrix(data, top_words_headlines_df, "Headline")
+
+# Stop Spark session
+#spark.stop()
