@@ -64,10 +64,10 @@ if __name__ == "__main__":
 
     # Convert total word counts to DataFrame and save to CSV
     total_title_word_counts_df = total_title_word_counts.toDF(["word", "count"]).toPandas()
-    total_title_word_counts_df.to_csv("output/total_title_word_counts.csv", header=True)
+    total_title_word_counts_df.to_csv("output/task1/total_title_word_counts.csv", header=True)
 
     total_headline_word_counts_df = total_headline_word_counts.toDF(["word", "count"]).toPandas()
-    total_headline_word_counts_df.to_csv("output/total_headline_word_counts.csv", header=True)
+    total_headline_word_counts_df.to_csv("output/task1/total_headline_word_counts.csv", header=True)
     
     date_word_rdd_title = data.rdd.filter(lambda row: row['Title'] is not None).flatMap(
     lambda row: [((row['PublishDate'], word.lower()), 1) for word in row['Title'].split()])
@@ -99,8 +99,8 @@ if __name__ == "__main__":
     word_count_pd_headline = word_count_df_headline.toPandas()
 
     # Save to CSV
-    word_count_pd_title.to_csv("output/per_date_word_counts_title.csv", index=False)
-    word_count_pd_headline.to_csv("output/per_date_word_counts_headline.csv", index=False)
+    word_count_pd_title.to_csv("output/task1/per_date_word_counts_title.csv", index=False)
+    word_count_pd_headline.to_csv("output/task1/per_date_word_counts_headline.csv", index=False)
     
     # Filter and flatMap to create ((topic, word), 1) pairs
     topic_word_rdd_title = data.rdd.filter(lambda row: row['Title'] is not None).flatMap(
@@ -133,8 +133,8 @@ if __name__ == "__main__":
     word_count_pd_headline = word_count_df_headline.toPandas()
 
     # Save to CSV
-    word_count_pd_title.to_csv("output/per_topic_word_counts_title.csv", index=False)
-    word_count_pd_headline.to_csv("output/per_topic_word_counts_headline.csv", index=False)
+    word_count_pd_title.to_csv("output/task1/per_topic_word_counts_title.csv", index=False)
+    word_count_pd_headline.to_csv("output/task1/per_topic_word_counts_headline.csv", index=False)
     
 # ***************************************TASK 3*************************************************************************
 
@@ -160,14 +160,14 @@ if __name__ == "__main__":
     sentiment_pd = sentiment_df.toPandas()
 
     # Save to CSV
-    sentiment_pd.to_csv("output/topic_sentiment_summary.csv", index=False)
+    sentiment_pd.to_csv("output/task3/topic_sentiment_summary.csv", index=False)
 
 
     # ***************************************TASK 4*************************************************************************
 
     # Load the word counts data
-    title_word_counts_df = spark.read.csv("output/per_topic_word_counts_title.csv", header=True, inferSchema=True)
-    headline_word_counts_df = spark.read.csv("output/per_topic_word_counts_headline.csv", header=True, inferSchema=True)
+    title_word_counts_df = spark.read.csv("output/task1/per_topic_word_counts_title.csv", header=True, inferSchema=True)
+    headline_word_counts_df = spark.read.csv("output/task1/per_topic_word_counts_headline.csv", header=True, inferSchema=True)
 
     # Function to extract top 100 words per topic
     def extract_top_words(df):
@@ -218,7 +218,7 @@ if __name__ == "__main__":
                 matrix.loc[word2, word1] = count
 
             # Save matrix to CSV
-            matrix.to_csv(f"output/co_occurrence_matrix_{topic_name}_{field}.csv")
+            matrix.to_csv(f"output/task4/co_occurrence_matrix_{topic_name}_{field}.csv")
 
     # Calculate co-occurrence matrices for titles and headlines
     calculate_co_occurrence_matrix(data, top_words_titles_df, "Title")
