@@ -1,6 +1,7 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import explode, split, lower, col, regexp_replace, collect_list, struct, expr
+from pyspark.sql.functions import explode, split, lower, col, regexp_replace, collect_list, struct, expr, lower, udf
 from operator import add
+from pyspark.sql.types import ArrayType, StringType
 from itertools import combinations
 from pyspark.sql import functions as F
 from itertools import combinations
@@ -188,18 +189,33 @@ if __name__ == "__main__":
             words = top_words_df.filter(col('topic') == topic_name).select('word').rdd.flatMap(lambda x: x).collect()
             word_pairs = list(combinations(words, 2))
 
-            # Initialize matrix
-            matrix = pd.DataFrame(0, index=words, columns=words)
+            
+            # Function to generate word pairs
+            def generate_pairs(content):
+                if content is None:
+                    return []
+                content_words = set(content.split(" "))
+                pairs = [(w1, w2) for w1 in content_words for w2 in content_words if w1 in words and w2 in words and w1 != w2]
+                return list(set(pairs))  # Remove duplicates
 
-            # Count co-occurrences
-            for pair in word_pairs:
-                count = news_data_df.filter(
-                    (col('Topic') == topic_name) & 
-                    col(field).like(f'%{pair[0]}%') & 
-                    col(field).like(f'%{pair[1]}%')
-                ).count()
-                matrix.loc[pair[0], pair[1]] = count
-                matrix.loc[pair[1], pair[0]] = count
+            # Register UDF
+            pair_udf = udf(generate_pairs, ArrayType(ArrayType(StringType())))
+
+            # Apply UDF to generate word pairs for each news item
+            filtered_news = news_data_df.filter(col("Topic") == topic_name)
+            pairs_df = filtered_news.withColumn("WordPairs", explode(pair_udf(lower(col(field)))))
+
+            # Count occurrences of each word pair
+            pairs_count = pairs_df.groupBy("WordPairs").count()
+
+            # Convert to Pandas DataFrame for matrix construction
+            pairs_count_pandas = pairs_count.toPandas()
+            matrix = pd.DataFrame(0, index=words, columns=words)
+            for index, row in pairs_count_pandas.iterrows():
+                word1, word2 = row["WordPairs"]
+                count = row["count"]
+                matrix.loc[word1, word2] = count
+                matrix.loc[word2, word1] = count
 
             # Save matrix to CSV
             matrix.to_csv(f"output/co_occurrence_matrix_{topic_name}_{field}.csv")
@@ -208,5 +224,5 @@ if __name__ == "__main__":
     calculate_co_occurrence_matrix(data, top_words_titles_df, "Title")
     calculate_co_occurrence_matrix(data, top_words_headlines_df, "Headline")
 
-# Stop Spark session
-#spark.stop()
+    # Stop Spark session
+    spark.stop()
